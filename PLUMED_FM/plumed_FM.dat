@@ -1,0 +1,83 @@
+MOLINFO MOLTYPE=protein STRUCTURE=protein.pdb
+WHOLEMOLECULES ENTITY0=1-3232
+
+lig: COM ATOMS=3233,3236,3237,3240,3241,3243,3245,3247,3249 # you need the COM of your ligand/molecule
+
+fps: FPS REFERENCE=Faidon_new_ref.pdb LIGAND=lig ANCHOR=2481 POINTS=-0.5910,0.3486,-1.6694,-0.6214,0.5475,-1.2516
+##############################################################################################
+# This is the colvar that has inside linepos and linedist (fps.lp and fps.ld, respectively).
+# Starting form the obvious, POINTS are the two points A and B to construct the funnel,
+# REFERENCE is a pdb file to align the target protein with the frame used to construct
+# the funnel. LIGAND must have the label of the COM of the ligand. ANCHOR is one of the
+# closest atoms of the protein with respect to the ligand. It's necessary to avoid pbc
+# problems.
+##############################################################################################
+
+FUNNEL ARG=fps.lp,fps.ld MINS=-1.0 MAXS=3.5 NBINS=600 ZCC=1.8 ALPHA=0.55 KAPPA=35100 LABEL=funnel
+##############################################################################################
+# This routine creates the external BIAS of the Funnel. ARG is already set and should
+# not be changed. S is the direction along linepos and MINS and MAXS define the maximum
+# values that fps.lp can take. ATTENTION: if fps.lp takes a value outside this interval
+# during the simulation, the simulation will crash. NBINS and NBINZ (not used here) 
+# determine the binning of the external BIAS. ZCC and ALPHA regulate the shape and
+# position of cone and cylinder. KAPPA is the constant used to evaluate the potential
+# in each bin.
+############################################################################################## 
+
+#METAD ARG=d1 SIGMA=0.01 HEIGHT=2.0 PACE=500 BIASFACTOR=12 TEMP=300 LABEL=metad # Not Funnel related
+
+UPPER_WALLS ARG=fps.lp AT=3.0 KAPPA=500000.0 EXP=3 OFFSET=0 LABEL=uwall
+##############################################################################################
+# Here pick a value lower than MAXS, the ligand MUST NOT exit the grid
+##############################################################################################
+
+LOWER_WALLS ARG=fps.lp AT=-0.3 KAPPA=500000.0 EXP=3 OFFSET=0 LABEL=lwall
+##############################################################################################
+# Here pick a value greater than MINS, the ligand MUST NOT exit the grid
+##############################################################################################
+#This is the rmsd from the bound pose. It involves the atoms at play in the bound pose
+RMSD REFERENCE=pocket.pdb TYPE=OPTIMAL LABEL=rmsd  
+UPPER_WALLS ARG=rmsd AT=1.2 KAPPA=500000.0 EXP=3 OFFSET=0 LABEL=rmsdwall # Not Funnel related, I am not allowing the ligand to fly to the solvent
+
+#This rmsd restricts the CA momevement of the entire protein
+rmsdINIT: RMSD REFERENCE=my_start_meta.pdb TYPE=OPTIMAL
+UPPER_WALLS ARG=rmsdINIT AT=0.09 KAPPA=420000 EXP=2 OFFSET=0 LABEL=rmsdwallINIT 
+
+#####DESCRIPTORS#####
+OW: GROUP ATOMS=3251-47362:3
+c1: COM ATOMS=2473-2495,2913-2919
+c2: COM ATOMS=3240
+dcm: DISTANCE ATOMS=c1,c2
+c3: COM ATOMS=2480
+c4: COM ATOMS=3236
+dsb: DISTANCE ATOMS=c3,c4
+t: TORSION ATOMS=2915,2780,3241,3247
+w: DISTANCES GROUPA=2481,2482,2492,2949 GROUPB=OW  LESS_THAN={RATIONAL R_0=0.4 NN=6 MM=12 D_MAX=0.5}
+BRIDGE BRIDGING_ATOMS=OW GROUPA=2805 GROUPB=2489 SWITCH={RATIONAL R_0=0.6 D_0=0.0 NN=6 MM=10 D_MAX=4.0} LABEL=wBpock
+lig_OW_large: DISTANCES GROUPA=3233,3236,3237,3240,3241,3243,3245,3247,3249 GROUPB=OW  LESS_THAN={RATIONAL R_0=0.8 NN=6 MM=12 D_MAX=0.4}
+
+##NORMALIZE DESCRITOPRS##
+COMBINE ARG=wBpock COEFFICIENTS=0.1538 POWERS=1 LABEL=wBpock_norm PERIODIC=NO
+ALPHABETA ...
+ATOMS1=2915,2780,3241,3247 REFERENCE=1.66
+LABEL=ab_t
+... ALPHABETA
+Prot:  DISTANCES GROUPA=3233,3236,3237,3240,3241,3243,3245,3247,3249 GROUPB=1-3232 LESS_THAN={RATIONAL R_0=0.32 NN=6 MM=12}
+COMBINE ARG=Prot.lessthan COEFFICIENTS=0.012 POWERS=1 LABEL=Prot_norm PERIODIC=NO
+COMBINE ARG=lig_OW_large.lessthan COEFFICIENTS=0.01351 POWERS=1 LABEL=lig_OW_large_norm PERIODIC=NO
+########################
+
+METAD ...
+ LABEL=metad
+ ARG=dsb SIGMA=0.005 HEIGHT=2.1  BIASFACTOR=15 TEMP=300 PACE=250
+ GRID_MIN=0 GRID_MAX=5 GRID_BIN=2000
+ REWEIGHTING_NGRID=2000
+ REWEIGHTING_NHILLS=20
+... METAD
+
+rw: REWEIGHT_METAD TEMP=300
+
+##Here we some all the bias encountered in the system including restraints+bias on CV##
+tbias: COMBINE ARG=metad.rbias,funnel.bias,uwall.bias,lwall.bias,rmsdwall.bias,rmsdwallINIT.bias PERIODIC=NO
+
+PRINT ARG=* FILE=COLVAR_FM STRIDE=250
